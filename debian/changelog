@@ -1,3 +1,40 @@
+apt (2.0.4) focal; urgency=medium
+
+  [ Julian Andres Klode ]
+  * Merge 2.0.2ubuntu0.1 and 2.0.2ubuntu0.2 security updates with 2.0.3
+    release.
+  * pkgnames: Correctly set the default for AllNames to false, and do not
+    exclude virtual packages if --all-names is specified (LP: #1876495)
+  * Remove expired domain that became nsfw from debian/changelog
+  * patterns: Terminate short pattern by ~ and ! (LP: #1911676)
+  * Improve immediate configuration handling (LP: #1871268)
+    - Do not immediately configure m-a: same packages in lockstep
+    - Ignore failures from immediate configuration. This does not change the
+      actual installation ordering - we never passed the return code to the
+      caller and installation went underway anyway if it could be ordered at a
+      later stage, this just removes spurious after-the-fact errors.
+
+  [ JCGoran ]
+  * Fix "extended_states" typo in apt-mark(8) (Closes: #969086)
+
+ -- Julian Andres Klode <juliank@ubuntu.com>  Thu, 14 Jan 2021 12:49:00 +0100
+
+apt (2.0.3) focal; urgency=medium
+
+  [ Frans Spiesschaert ]
+  * Dutch manpages translation update (Closes: #956313)
+
+  [ David Kalnischkies ]
+  * Add correct std namespace to nullptr_t
+
+  [ Julian Andres Klode ]
+  * Reinstate * wildcards (Closes: #953531) (LP: #1872200)
+  * apt list: Fix behavior of regex vs fnmatch vs wildcards
+  * debian/gbp.conf: We're in the 2.0.y branch
+  * CI: Test on ubuntu:focal, not debian:unstable
+
+ -- Julian Andres Klode <juliank@ubuntu.com>  Tue, 05 May 2020 13:20:26 +0200
+
 apt (2.0.2ubuntu0.2) focal-security; urgency=high
 
   * SECURITY UPDATE: Integer overflow in parsing (LP: #1899193)
@@ -627,7 +664,6 @@ apt (1.7.0~alpha3) experimental; urgency=medium
     supply any InRelease file without it having to be verified. (LP: #1787752)
     - apt-pkg/acquire-item.cc:: clear alternative URIs for mirror:// between steps
     - CVE-2018-0501
-    - https://mirror.fail/
 
   [ Jean-Ralph Aviles ]
   * Add trailing newline to output of edit-sources.
