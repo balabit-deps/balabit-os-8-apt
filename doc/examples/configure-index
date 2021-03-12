@@ -54,6 +54,9 @@ APT
   Build-Profiles "<STRING_OR_LIST>";
 
   NeverAutoRemove "<LIST>";  // list of package name regexes
+  LastInstalledKernel "<STRING>"; // last installed kernel version
+  VersionedKernelPackages "<LIST>"; // regular expressions to be protected from autoremoval (kernel uname will be appended)
+  Protect-Kernels "<BOOL>"; // whether to protect installed kernels against autoremoval (default: true)
 
   // Options for apt-get
   Get
@@ -158,6 +161,7 @@ APT
   {
      Pre-Invoke {"touch /var/lib/apt/pre-update-stamp"; };
      Post-Invoke {"touch /var/lib/apt/post-update-stamp"; };
+     Error-Mode "<STRING>";
   };
 
   /* define a new supported compressor on the fly
@@ -558,6 +562,7 @@ Debug
 pkgCacheGen
 {
   Essential "<STRING>"; // native,all, none, installed
+  Protected "<STRING>"; // native,all, none, installed
   ForceEssential "<STRING_OR_LIST>"; // package names
   ForceImportant "<LIST>"; // package names
 };

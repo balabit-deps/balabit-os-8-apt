@@ -1416,6 +1416,15 @@ static bool ItemIsEssential(pkgDPkgPM::Item const &I)
       return true;
    return (I.Pkg->Flags & pkgCache::Flag::Essential) != 0;
 }
+static bool ItemIsProtected(pkgDPkgPM::Item const &I)
+{
+   static auto const cachegen = _config->Find("pkgCacheGen::Protected");
+   if (cachegen == "none" || cachegen == "native")
+      return true;
+   if (unlikely(I.Pkg.end()))
+      return true;
+   return (I.Pkg->Flags & pkgCache::Flag::Important) != 0;
+}
 bool pkgDPkgPM::ExpandPendingCalls(std::vector<Item> &List, pkgDepCache &Cache)
 {
    {
@@ -1712,6 +1721,7 @@ bool pkgDPkgPM::Go(APT::Progress::PackageManager *progress)
    OpenLog();
 
    bool dpkgMultiArch = _system->MultiArchSupported();
+   bool dpkgProtectedField = debSystem::AssertFeature("protected-field");
 
    // start pty magic before the loop
    StartPtyMagic();
@@ -1755,8 +1765,8 @@ bool pkgDPkgPM::Go(APT::Progress::PackageManager *progress)
       if (pipe(fd) != 0)
 	 return _error->Errno("pipe","Failed to create IPC pipe to dpkg");
 
-#define ADDARG(X) Args.push_back(X); Size += strlen(X)
-#define ADDARGC(X) Args.push_back(X); Size += sizeof(X) - 1
+#define ADDARG(X) do { const char *arg = (X); Args.push_back(arg); Size += strlen(arg); } while (0)
+#define ADDARGC(X) ADDARG(X)
 
       ADDARGC("--status-fd");
       char status_fd_buf[20];
@@ -1779,6 +1789,10 @@ bool pkgDPkgPM::Go(APT::Progress::PackageManager *progress)
 	 if (std::any_of(I, J, ItemIsEssential))
 	 {
 	    ADDARGC("--force-remove-essential");
+	 }
+	 if (dpkgProtectedField && std::any_of(I, J, ItemIsProtected))
+	 {
+	    ADDARGC("--force-remove-protected");
 	 }
 	 ADDARGC("--remove");
 	 break;
@@ -1810,6 +1824,9 @@ bool pkgDPkgPM::Go(APT::Progress::PackageManager *progress)
 	 case Item::Install:
 	 ADDARGC("--unpack");
 	 ADDARGC("--auto-deconfigure");
+	 // dpkg < 1.20.8 needs --force-remove-protected to deconfigure protected packages
+	 if (dpkgProtectedField)
+	    ADDARGC("--force-remove-protected");
 	 break;
       }
 

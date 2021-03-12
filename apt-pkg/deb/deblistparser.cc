@@ -253,7 +253,7 @@ bool debListParser::NewVersion(pkgCache::VerIterator &Ver)
 // ListParser::AvailableDescriptionLanguages				/*{{{*/
 std::vector<std::string> debListParser::AvailableDescriptionLanguages()
 {
-   std::vector<std::string> const understood = APT::Configuration::getLanguages();
+   std::vector<std::string> const understood = APT::Configuration::getLanguages(true);
    std::vector<std::string> avail;
    static constexpr int prefixLen = 12;
    char buf[32] = "Description-";
@@ -317,6 +317,8 @@ bool debListParser::UsePackage(pkgCache::PkgIterator &Pkg,
       if (Section.FindFlag(pkgTagSection::Key::Essential,Pkg->Flags,pkgCache::Flag::Essential) == false)
 	 return false;
    if (Section.FindFlag(pkgTagSection::Key::Important,Pkg->Flags,pkgCache::Flag::Important) == false)
+      return false;
+   if (Section.FindFlag(pkgTagSection::Key::Protected, Pkg->Flags, pkgCache::Flag::Important) == false)
       return false;
 
    if (std::find(forceEssential.begin(), forceEssential.end(), Pkg.Name()) != forceEssential.end())
