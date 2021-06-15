@@ -11,10 +11,13 @@
 #include <apt-pkg/macros.h>
 #include <apt-pkg/strutl.h>
 #include <apt-private/private-json-hooks.h>
+#include <apt-private/private-output.h>
 
+#include <iomanip>
 #include <ostream>
 #include <sstream>
 #include <stack>
+#include <unordered_map>
 
 #include <signal.h>
 #include <sys/socket.h>
@@ -23,7 +26,7 @@
 /**
  * @brief Simple JSON writer
  *
- * This performs no error checking, or string escaping, be careful.
+ * This performs no error checking, so be careful.
  */
 class APT_HIDDEN JsonWriter
 {
@@ -78,6 +81,7 @@ class APT_HIDDEN JsonWriter
    void popState()
    {
       this->state = old_states.top();
+      old_states.pop();
    }
 
    public:
@@ -109,22 +113,40 @@ class APT_HIDDEN JsonWriter
       os << '}';
       return *this;
    }
+   std::ostream &encodeString(std::ostream &out, std::string const &str)
+   {
+      out << '"';
+
+      for (std::string::const_iterator c = str.begin(); c != str.end(); c++)
+      {
+	 if (*c <= 0x1F || *c == '"' || *c == '\\')
+	    ioprintf(out, "\\u%04X", *c);
+	 else
+	    out << *c;
+      }
+
+      out << '"';
+      return out;
+   }
    JsonWriter &name(std::string const &name)
    {
       maybeComma();
-      os << '"' << name << '"' << ':';
+      encodeString(os, name) << ':';
       return *this;
    }
    JsonWriter &value(std::string const &value)
    {
       maybeComma();
-      os << '"' << value << '"';
+      encodeString(os, value);
       return *this;
    }
    JsonWriter &value(const char *value)
    {
       maybeComma();
-      os << '"' << value << '"';
+      if (value == nullptr)
+	 os << "null";
+      else
+	 encodeString(os, value);
       return *this;
    }
    JsonWriter &value(int value)
@@ -178,6 +200,33 @@ class APT_HIDDEN JsonWriter
 };
 
 /**
+ * @brief Write a VerFileIterator to a JsonWriter
+ */
+static void verFiletoJson(JsonWriter &writer, CacheFile &, pkgCache::VerFileIterator const &vf)
+{
+   auto pf = vf.File(); // Packages file
+   auto rf = pf.ReleaseFile(); // release file
+
+   writer.beginObject();
+   if (not rf.end()) {
+      if (rf->Archive != 0)
+	 writer.name("archive").value(rf.Archive());
+      if (rf->Codename != 0)
+	 writer.name("codename").value(rf.Codename());
+      if (rf->Version != 0)
+	 writer.name("version").value(rf.Version());
+      if (rf->Origin != 0)
+	 writer.name("origin").value(rf.Origin());
+      if (rf->Label != 0)
+	 writer.name("label").value(rf.Label());
+      if (rf->Site != 0)
+	 writer.name("site").value(rf.Site());
+   }
+
+   writer.endObject();
+}
+
+/**
  * @brief Write a VerIterator to a JsonWriter
  */
 static void verIterToJson(JsonWriter &writer, CacheFile &Cache, pkgCache::VerIterator const &Ver)
@@ -187,6 +236,14 @@ static void verIterToJson(JsonWriter &writer, CacheFile &Cache, pkgCache::VerIte
    writer.name("version").value(Ver.VerStr());
    writer.name("architecture").value(Ver.Arch());
    writer.name("pin").value(Cache->GetPolicy().GetPriority(Ver));
+
+   writer.name("origins");
+   writer.beginArray();
+   for (auto vf = Ver.FileList(); !vf.end(); vf++)
+      if ((vf.File()->Flags & pkgCache::Flag::NotSource) == 0)
+         verFiletoJson(writer, Cache, vf);
+   writer.endArray();
+
    writer.endObject();
 }
 
@@ -209,7 +266,7 @@ static void DpkgChrootDirectory()
 /**
  * @brief Send a notification to the hook's stream
  */
-static void NotifyHook(std::ostream &os, std::string const &method, const char **FileList, CacheFile &Cache, std::set<std::string> const &UnknownPackages)
+static void NotifyHook(std::ostream &os, std::string const &method, const char **FileList, CacheFile &Cache, std::set<std::string> const &UnknownPackages, int hookVersion)
 {
    SortedPackageUniverse Universe(Cache);
    JsonWriter jsonWriter{os};
@@ -221,11 +278,14 @@ static void NotifyHook(std::ostream &os, std::string const &method, const char *
 
    /* Build params */
    jsonWriter.name("params").beginObject();
-   jsonWriter.name("command").value(FileList[0]);
-   jsonWriter.name("search-terms").beginArray();
-   for (int i = 1; FileList[i] != NULL; i++)
-      jsonWriter.value(FileList[i]);
-   jsonWriter.endArray();
+   if (FileList != nullptr)
+   {
+      jsonWriter.name("command").value(FileList[0]);
+      jsonWriter.name("search-terms").beginArray();
+      for (int i = 1; FileList[i] != NULL; i++)
+	 jsonWriter.value(FileList[i]);
+      jsonWriter.endArray();
+   }
    jsonWriter.name("unknown-packages").beginArray();
    for (auto const &PkgName : UnknownPackages)
       jsonWriter.value(PkgName);
@@ -252,7 +312,14 @@ static void NotifyHook(std::ostream &os, std::string const &method, const char *
       switch (Cache[Pkg].Mode)
       {
       case pkgDepCache::ModeInstall:
-	 jsonWriter.name("mode").value("install");
+	 if (Pkg->CurrentVer != 0 && Cache[Pkg].Upgrade() && hookVersion >= 0x020)
+	    jsonWriter.name("mode").value("upgrade");
+	 else if (Pkg->CurrentVer != 0 && Cache[Pkg].Downgrade() && hookVersion >= 0x020)
+	    jsonWriter.name("mode").value("downgrade");
+	 else if (Pkg->CurrentVer != 0 && Cache[Pkg].ReInstall() && hookVersion >= 0x020)
+	    jsonWriter.name("mode").value("reinstall");
+	 else
+	    jsonWriter.name("mode").value("install");
 	 break;
       case pkgDepCache::ModeDelete:
 	 jsonWriter.name("mode").value(Cache[Pkg].Purge() ? "purge" : "deinstall");
@@ -285,7 +352,7 @@ static void NotifyHook(std::ostream &os, std::string const &method, const char *
 static std::string BuildHelloMessage()
 {
    std::stringstream Hello;
-   JsonWriter(Hello).beginObject().name("jsonrpc").value("2.0").name("method").value("org.debian.apt.hooks.hello").name("id").value(0).name("params").beginObject().name("versions").beginArray().value("0.1").endArray().endObject().endObject();
+   JsonWriter(Hello).beginObject().name("jsonrpc").value("2.0").name("method").value("org.debian.apt.hooks.hello").name("id").value(0).name("params").beginObject().name("versions").beginArray().value("0.1").value("0.2").endArray().endObject().endObject();
 
    return Hello.str();
 }
@@ -302,11 +369,10 @@ static std::string BuildByeMessage()
 /// @brief Run the Json hook processes in the given option.
 bool RunJsonHook(std::string const &option, std::string const &method, const char **FileList, CacheFile &Cache, std::set<std::string> const &UnknownPackages)
 {
-   std::stringstream ss;
-   NotifyHook(ss, method, FileList, Cache, UnknownPackages);
-   std::string TheData = ss.str();
+   std::unordered_map<int, std::string> notifications;
    std::string HelloData = BuildHelloMessage();
    std::string ByeData = BuildByeMessage();
+   int hookVersion;
 
    bool result = true;
 
@@ -314,6 +380,13 @@ bool RunJsonHook(std::string const &option, std::string const &method, const cha
    if (Opts == 0 || Opts->Child == 0)
       return true;
    Opts = Opts->Child;
+
+   // Flush output before calling hooks
+   std::clog.flush();
+   std::cerr.flush();
+   std::cout.flush();
+   c2out.flush();
+   c1out.flush();
 
    sighandler_t old_sigpipe = signal(SIGPIPE, SIG_IGN);
    sighandler_t old_sigint = signal(SIGINT, SIG_IGN);
@@ -399,6 +472,20 @@ bool RunJsonHook(std::string const &option, std::string const &method, const cha
 	 goto out;
       }
 
+      if (strstr(line, "\"0.1\""))
+      {
+	 hookVersion = 0x010;
+      }
+      else if (strstr(line, "\"0.2\""))
+      {
+	 hookVersion = 0x020;
+      }
+      else
+      {
+	 _error->Error("Unknown hook version in handshake from hook %s: %s", Opts->Value.c_str(), line);
+	 goto out;
+      }
+
       size = getline(&line, &linesize, F);
       if (size < 0)
       {
@@ -410,9 +497,18 @@ bool RunJsonHook(std::string const &option, std::string const &method, const cha
 	 _error->Error("Expected empty line after handshake from %s, received %s", Opts->Value.c_str(), line);
 	 goto out;
       }
-
-      fwrite(TheData.data(), TheData.size(), 1, F);
-      fwrite("\n\n", 2, 1, F);
+      {
+	 std::string &data = notifications[hookVersion];
+	 if (data.empty())
+	 {
+	    std::stringstream ss;
+	    NotifyHook(ss, method, FileList, Cache, UnknownPackages, hookVersion);
+	    ;
+	    data = ss.str();
+	 }
+	 fwrite(data.data(), data.size(), 1, F);
+	 fwrite("\n\n", 2, 1, F);
+      }
 
       fwrite(ByeData.data(), ByeData.size(), 1, F);
       fwrite("\n\n", 2, 1, F);
@@ -424,6 +520,7 @@ bool RunJsonHook(std::string const &option, std::string const &method, const cha
 	 result = _error->Error("Failure running hook %s", Opts->Value.c_str());
 	 break;
       }
+
    }
    signal(SIGINT, old_sigint);
    signal(SIGPIPE, old_sigpipe);
