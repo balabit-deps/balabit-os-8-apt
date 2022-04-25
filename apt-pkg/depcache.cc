@@ -9,9 +9,9 @@
 // Include Files							/*{{{*/
 #include <config.h>
 
+#include <apt-pkg/algorithms.h>
 #include <apt-pkg/aptconfiguration.h>
 #include <apt-pkg/cachefile.h>
-#include <apt-pkg/cachefilter.h>
 #include <apt-pkg/cacheset.h>
 #include <apt-pkg/configuration.h>
 #include <apt-pkg/depcache.h>
@@ -37,13 +37,29 @@
 #include <string.h>
 
 #include <sys/stat.h>
-#include <sys/utsname.h>
 
 #include <apti18n.h>
 									/*}}}*/
 
 using std::string;
 
+// helper for kernel autoremoval				  	/*{{{*/
+
+/** \brief Returns \b true for packages matching a regular
+ *  expression in APT::NeverAutoRemove.
+ */
+class DefaultRootSetFunc2 : public pkgDepCache::DefaultRootSetFunc
+{
+   std::unique_ptr<APT::CacheFilter::Matcher> Kernels;
+
+   public:
+   DefaultRootSetFunc2(pkgCache *cache) : Kernels(APT::KernelAutoRemoveHelper::GetProtectedKernelsFilter(cache)){};
+   virtual ~DefaultRootSetFunc2(){};
+
+   bool InRootSet(const pkgCache::PkgIterator &pkg) APT_OVERRIDE { return pkg.end() == false && ((*Kernels)(pkg) || DefaultRootSetFunc::InRootSet(pkg)); };
+};
+
+									/*}}}*/
 // helper for Install-Recommends-Sections and Never-MarkAuto-Sections	/*{{{*/
 static bool 
 ConfigValueInSubTree(const char* SubTree, const char *needle)
@@ -1795,49 +1811,16 @@ APT_PURE signed short pkgDepCache::Policy::GetPriority(pkgCache::VerIterator con
 APT_PURE signed short pkgDepCache::Policy::GetPriority(pkgCache::PkgFileIterator const &/*File*/)
 { return 0; }
 									/*}}}*/
-
-class APT_HIDDEN DefaultRootSetFunc2 : public pkgDepCache::InRootSetFunc, public Configuration::MatchAgainstConfig
-{
-   std::unique_ptr<APT::CacheFilter::PackageNameMatchesRegEx> unameMatcher;
-
-   public:
-   DefaultRootSetFunc2() : Configuration::MatchAgainstConfig("APT::NeverAutoRemove")
-   {
-      bool Debug = _config->FindB("Debug::pkgAutoRemove", false);
-      struct utsname u;
-      if (not _config->FindB("APT::Protect-Kernels", true) || uname(&u) != 0)
-	 return;
-
-      // Escape . and + in the the uname
-      std::string uname = u.release;
-      for (size_t pos = 0; (pos = uname.find_first_of(".+", pos)) != uname.npos; pos += 2)
-	 uname.insert(pos, 1, '\\');
-
-      std::string pattern;
-      for (auto const &kernelPackage : _config->FindVector("APT::VersionedKernelPackages"))
-	 pattern += "|^" + kernelPackage + "-" + uname + "$";
-
-      if (pattern.empty())
-	 return;
-
-      if (Debug)
-	 std::clog << "Kernel protection regex: " << pattern.substr(1) << std::endl;
-      unameMatcher = std::make_unique<APT::CacheFilter::PackageNameMatchesRegEx>(pattern.substr(1));
-   };
-
-   bool InRootSet(const pkgCache::PkgIterator &pkg) APT_OVERRIDE { return pkg.end() == false && ((unameMatcher && (*unameMatcher)(pkg)) || Match(pkg.Name())); };
-};
-
 pkgDepCache::InRootSetFunc *pkgDepCache::GetRootSetFunc()		/*{{{*/
 {
-  DefaultRootSetFunc2 *f = new DefaultRootSetFunc2;
-  if(f->wasConstructedSuccessfully())
-    return f;
-  else
-    {
+   DefaultRootSetFunc *f = new DefaultRootSetFunc2(&GetCache());
+   if (f->wasConstructedSuccessfully())
+      return f;
+   else
+   {
       delete f;
       return NULL;
-    }
+   }
 }
 									/*}}}*/
 bool pkgDepCache::MarkFollowsRecommends()
