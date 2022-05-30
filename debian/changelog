@@ -1,3 +1,9 @@
+apt (2.0.8bb2) focal; urgency=medium
+
+  * Balabit patched version
+
+ -- Balabit Platform Team <devnull@dev.null>  Mon, 30 May 2022 16:43:31 +0200
+
 apt (2.0.8bb1) focal; urgency=medium
 
   * postinst: Do not run removed kernel postinst.d script
