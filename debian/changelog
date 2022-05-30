@@ -1,3 +1,9 @@
+apt (2.0.8bb1) focal; urgency=medium
+
+  * postinst: Do not run removed kernel postinst.d script
+
+ -- Balabit Platform Team <devnull@dev.null>  Mon, 30 May 2022 16:24:59 +0200
+
 apt (2.0.8) focal; urgency=medium
 
   * Adjust conffile removal version in postinst and maintscript; followup
